@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { @apply bg-cream font-sans text-ink antialiased;
+
+/* SVG drag support */
+svg {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+svg g {
+  touch-action: none;
+}
+}
