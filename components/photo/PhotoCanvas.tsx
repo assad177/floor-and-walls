@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { PRODUCTS_BY_ID } from "@/data/products";
 import { TEXTURES } from "@/data/textures";
 import {
@@ -17,24 +18,29 @@ import FurnitureLayer from "./Furniturelayer";
 interface Props {
   photoUrl: string;
   areas: Area[];
-  products: Record<AreaType, string | null>;
+  products: Record<string, string | null>;
   activeType: AreaType;
   furniture: FurnitureItem[];
   selectedFurnitureId: string | null;
-  /** Returns false when the active type is already at its limit. */
-  onAddPoint: (p: Point) => boolean;
+  onAddPoint: (point: Point) => boolean;
   onClose: (areaId: string) => void;
-  onMovePoint: (areaId: string, index: number, p: Point) => void;
+  onMovePoint: (areaId: string, index: number, point: Point) => void;
   onSetPoints: (areaId: string, points: Point[]) => void;
-  onInsertPoint: (areaId: string, index: number, p: Point) => void;
+  onInsertPoint: (areaId: string, index: number, point: Point) => void;
   onRemovePoint: (areaId: string, index: number) => void;
   onFurnitureSelect: (id: string | null) => void;
   onFurnitureUpdate: (id: string, patch: Partial<FurnitureItem>) => void;
 }
 
-/** Corners may sit this far (viewBox units, 100 = photo width) outside the photo. */
-const M = 6;
-const PAD = M / (100 + 2 * M);
+const MARGIN = 6;
+const PADDING = MARGIN / (100 + 2 * MARGIN);
+
+const AREA_COLORS: Record<AreaType, string> = {
+  wall: "#3B82F6",
+  floor: "#22C55E",
+  ceiling: "#A855F7",
+  window: "#F59E0B",
+};
 
 export default function PhotoCanvas({
   photoUrl,
@@ -54,64 +60,113 @@ export default function PhotoCanvas({
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+
   const edgeDrag = useRef<{
     areaId: string;
     i: number;
     j: number;
     start: Point;
-    orig: Point[];
+    original: Point[];
   } | null>(null);
+
   const vertexMoved = useRef(false);
-  const [aspect, setAspect] = useState(0.75); // photo height / width
+
+  const [aspect, setAspect] = useState(0.75);
   const [width, setWidth] = useState(600);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
+    const element = wrapRef.current;
+    if (!element) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      setWidth(entry.contentRect.width);
+    });
+
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
 
-  // a message about one area type should not follow the user to another
-  useEffect(() => setNotice(null), [activeType]);
+  useEffect(() => {
+    setNotice(null);
+  }, [activeType]);
 
-  const H = 100 * aspect;
-  const u = 100 / Math.max(width * (1 - 2 * PAD), 1); // viewBox units per screen pixel
-  const toView = (p: Point) => [p.x * 100, p.y * H] as const;
-  const clampX = (n: number) => Math.min(1 + M / 100, Math.max(-M / 100, n));
-  const clampY = (n: number) => Math.min(1 + M / H, Math.max(-M / H, n));
+  const height = 100 * aspect;
+  const unit = 100 / Math.max(width * (1 - 2 * PADDING), 1);
 
-  /** Screen position -> fraction of the photo, not clamped. */
-  const rawPoint = (e: { clientX: number; clientY: number }): Point => {
-    const r = imgRef.current!.getBoundingClientRect();
-    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  const toView = (point: Point): [number, number] => [
+    point.x * 100,
+    point.y * height,
+  ];
+
+  const clampX = (value: number) =>
+    Math.min(1 + MARGIN / 100, Math.max(-MARGIN / 100, value));
+
+  const clampY = (value: number) =>
+    Math.min(
+      1 + MARGIN / height,
+      Math.max(-MARGIN / height, value)
+    );
+
+  const rawPoint = (event: {
+    clientX: number;
+    clientY: number;
+  }): Point => {
+    const image = imgRef.current;
+    if (!image) return { x: 0, y: 0 };
+
+    const rect = image.getBoundingClientRect();
+
+    return {
+      x: (event.clientX - rect.left) / rect.width,
+      y: (event.clientY - rect.top) / rect.height,
+    };
   };
-  const toPoint = (e: { clientX: number; clientY: number }): Point => {
-    const p = rawPoint(e);
-    return { x: clampX(p.x), y: clampY(p.y) };
+
+  const toPoint = (event: {
+    clientX: number;
+    clientY: number;
+  }): Point => {
+    const point = rawPoint(event);
+
+    return {
+      x: clampX(point.x),
+      y: clampY(point.y),
+    };
   };
 
-  const handleTap = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleTap = (event: MouseEvent<SVGSVGElement>) => {
     onFurnitureSelect(null);
-    const ok = onAddPoint(toPoint(e));
+
+    const added = onAddPoint(toPoint(event));
     const max = MAX_AREAS[activeType];
+
     setNotice(
-      ok ? null : `Only ${max} ${activeType}${max > 1 ? "s" : ""} can be marked. Use Clear to start again.`,
+      added
+        ? null
+        : `Only ${max} ${activeType}${max > 1 ? "s" : ""} can be marked. Use Clear to start again.`
     );
   };
 
   const texturedIds = Array.from(
-    new Set(Object.values(products).filter((id): id is string => !!id && !!TEXTURES[id])),
+    new Set(
+      Object.values(products).filter(
+        (id): id is string => Boolean(id && TEXTURES[id])
+      )
+    )
   );
 
-  // Only shapes still being drawn show handles. Once a shape is closed they disappear.
-  const editable = areas.filter((a) => a.type === activeType && !a.closed);
+  const editableAreas = areas.filter(
+    (area) => area.type === activeType && !area.closed
+  );
 
   return (
     <div>
-      <div ref={wrapRef} className="rounded-xl bg-navy/5" style={{ padding: `${PAD * 100}%` }}>
+      <div
+        ref={wrapRef}
+        className="rounded-xl bg-navy/5"
+        style={{ padding: `${PADDING * 100}%` }}
+      >
         <div className="relative">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -120,100 +175,224 @@ export default function PhotoCanvas({
             alt="Your room"
             className="block w-full select-none rounded-md"
             draggable={false}
-            onLoad={(e) => setAspect(e.currentTarget.naturalHeight / e.currentTarget.naturalWidth)}
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (image.naturalWidth) {
+                setAspect(image.naturalHeight / image.naturalWidth);
+              }
+            }}
           />
 
           <svg
-            viewBox={`${-M} ${-M} ${100 + 2 * M} ${H + 2 * M}`}
+            viewBox={`-${MARGIN} -${MARGIN} ${100 + 2 * MARGIN} ${height + 2 * MARGIN}`}
             style={{
               position: "absolute",
-              left: `${-M}%`,
-              top: `${(-M / H) * 100}%`,
-              width: `${100 + 2 * M}%`,
-              height: `${((H + 2 * M) / H) * 100}%`,
+              left: `${-MARGIN}%`,
+              top: `${(-MARGIN / height) * 100}%`,
+              width: `${100 + 2 * MARGIN}%`,
+              height: `${((height + 2 * MARGIN) / height) * 100}%`,
               overflow: "visible",
               cursor: "crosshair",
             }}
             onClick={handleTap}
           >
             <defs>
-              <clipPath id="photo-clip">
-                <rect x={0} y={0} width={100} height={H} />
+              <clipPath id="room-photo-clip">
+                <rect width="100" height={height} />
               </clipPath>
 
               {texturedIds.map((id) => {
-                const t = TEXTURES[id];
-                if (t.tile) {
-                  // repeats at a fixed size, so planks and tiles look the right scale
-                  const size = t.tile * 100; // viewBox units, where 100 is the photo's width
-                  return (
-                    <pattern key={id} id={`tex-${id}`} patternUnits="userSpaceOnUse" width={size} height={size}>
-                      <image href={t.src} width={size} height={size} preserveAspectRatio="none" />
-                    </pattern>
-                  );
-                }
-                // no tile: one copy stretched over the whole area
+                const texture = TEXTURES[id];
+                const size = texture.tile
+                  ? texture.tile * 100
+                  : undefined;
+
                 return (
-                  <pattern key={id} id={`tex-${id}`} patternUnits="objectBoundingBox" width="1" height="1">
-                    <image href={t.src} width="100%" height="100%" preserveAspectRatio="none" />
+                  <pattern
+                    key={id}
+                    id={`room-texture-${id}`}
+                    patternUnits={
+                      texture.tile ? "userSpaceOnUse" : "objectBoundingBox"
+                    }
+                    width={size ?? 1}
+                    height={size ?? 1}
+                  >
+                    <image
+                      href={texture.src}
+                      width={texture.tile ? size : "100%"}
+                      height={texture.tile ? size : "100%"}
+                      preserveAspectRatio="none"
+                    />
                   </pattern>
                 );
               })}
             </defs>
 
-            {/* materials are clipped to the photo, so a shape running past the edge fills right up to it */}
-            <g clipPath="url(#photo-clip)" pointerEvents="none">
+            <g clipPath="url(#room-photo-clip)" pointerEvents="none">
               {areas.map((area) => {
-                const str = area.points
-                  .map(toView)
-                  .map(([x, y]) => `${x},${y}`)
+                const points = area.points
+                  .map((point) => {
+                    const [x, y] = toView(point);
+                    return `${x},${y}`;
+                  })
                   .join(" ");
-                const product = products[area.type] ? PRODUCTS_BY_ID[products[area.type] as string] : undefined;
-                const fill = product ? (TEXTURES[product.id] ? `url(#tex-${product.id})` : product.color) : "#3B82F6";
-                const stroke = area.type === activeType ? "#3B82F6" : "#fff";
 
-                return isComplete(area) ? (
+                // Each area gets its own product; windows remain unpainted.
+                const productId =
+                  area.type === "window" ? null : products[area.id];
+
+                const product = productId
+                  ? PRODUCTS_BY_ID[productId]
+                  : undefined;
+
+                const fill = product
+                  ? TEXTURES[product.id]
+                    ? `url(#room-texture-${product.id})`
+                    : product.color
+                  : AREA_COLORS[area.type];
+
+                const stroke =
+                  area.type === activeType ? AREA_COLORS[area.type] : "#FFFFFF";
+
+                return (
                   <g key={area.id}>
                     <polygon
-                      points={str}
+                      points={points}
                       fill={fill}
-                      fillOpacity={product ? 0.92 : 0.25}
-                      // multiply keeps the photo's light and shadow showing through the new material
-                      style={product ? { mixBlendMode: "multiply" } : undefined}
+                      fillOpacity={
+                        product ? 0.92 : area.type === "window" ? 0.45 : 0.25
+                      }
+                      style={
+                        product ? { mixBlendMode: "multiply" } : undefined
+                      }
                     />
-                    <polygon
-                      points={str}
-                      fill="none"
-                      stroke={stroke}
-                      strokeWidth={area.type === activeType ? 2 : 1}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  </g>
-                ) : (
-                  <g key={area.id}>
-                    <polygon points={str} fill="#3B82F6" fillOpacity={0.12} />
-                    <polyline
-                      points={str}
-                      fill="none"
-                      stroke={stroke}
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                      vectorEffect="non-scaling-stroke"
-                    />
+
+                    {isComplete(area) ? (
+                      <polygon
+                        points={points}
+                        fill="none"
+                        stroke={stroke}
+                        strokeWidth={area.type === activeType ? 2 : 1}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ) : (
+                      <polyline
+                        points={points}
+                        fill="none"
+                        stroke={stroke}
+                        strokeWidth={2}
+                        strokeDasharray="6 4"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    )}
                   </g>
                 );
               })}
             </g>
 
-            {/* edges: grab a line and move it anywhere */}
-            {editable.flatMap((area) =>
-              area.points.map((p, i) => {
-                const j = (i + 1) % area.points.length;
-                const [x1, y1] = toView(p);
-                const [x2, y2] = toView(area.points[j]);
+            {editableAreas.flatMap((area) =>
+              area.points.map((point, index) => {
+                const next = area.points[(index + 1) % area.points.length];
+                const midpoint = {
+                  x: (point.x + next.x) / 2,
+                  y: (point.y + next.y) / 2,
+                };
+                const [x, y] = toView(midpoint);
+
+                return (
+                  <g
+                    key={`mid-${area.id}-${index}`}
+                    style={{ cursor: "copy" }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onInsertPoint(area.id, index, midpoint);
+                    }}
+                  >
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={9 * unit}
+                      fill="#FFFFFF"
+                      stroke={AREA_COLORS[area.type]}
+                      strokeWidth={2}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <text
+                      x={x}
+                      y={y}
+                      fontSize={13 * unit}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fill={AREA_COLORS[area.type]}
+                      pointerEvents="none"
+                    >
+                      +
+                    </text>
+                  </g>
+                );
+              })
+            )}
+
+            {editableAreas.flatMap((area) =>
+              area.points.map((point, index) => {
+                const [x, y] = toView(point);
+                const canClose =
+                  index === 0 && area.points.length >= MIN_POINTS;
+
+                return (
+                  <circle
+                    key={`${area.id}-${index}`}
+                    cx={x}
+                    cy={y}
+                    r={(canClose ? 14 : 11) * unit}
+                    fill={canClose ? "#16A34A" : AREA_COLORS[area.type]}
+                    stroke="#FFFFFF"
+                    strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                    style={{ cursor: "grab", touchAction: "none" }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (canClose && !vertexMoved.current) {
+                        onClose(area.id);
+                      }
+                    }}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      onRemovePoint(area.id, index);
+                    }}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      vertexMoved.current = false;
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+                        return;
+                      }
+
+                      vertexMoved.current = true;
+                      onMovePoint(area.id, index, toPoint(event));
+                    }}
+                    onPointerUp={(event) => {
+                      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                        event.currentTarget.releasePointerCapture(event.pointerId);
+                      }
+                    }}
+                  />
+                );
+              })
+            )}
+
+            {editableAreas.flatMap((area) =>
+              area.points.map((point, index) => {
+                const nextIndex = (index + 1) % area.points.length;
+                const next = area.points[nextIndex];
+                const [x1, y1] = toView(point);
+                const [x2, y2] = toView(next);
+
                 return (
                   <line
-                    key={`edge-${area.id}-${i}`}
+                    key={`edge-${area.id}-${index}`}
                     x1={x1}
                     y1={y1}
                     x2={x2}
@@ -222,108 +401,58 @@ export default function PhotoCanvas({
                     strokeWidth={18}
                     vectorEffect="non-scaling-stroke"
                     style={{ cursor: "move", touchAction: "none" }}
-                    onClick={(e) => e.stopPropagation()}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      edgeDrag.current = { areaId: area.id, i, j, start: rawPoint(e), orig: area.points };
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      event.currentTarget.setPointerCapture(event.pointerId);
+
+                      edgeDrag.current = {
+                        areaId: area.id,
+                        i: index,
+                        j: nextIndex,
+                        start: rawPoint(event),
+                        original: area.points,
+                      };
                     }}
-                    onPointerMove={(e) => {
-                      const d = edgeDrag.current;
-                      if (!d || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
-                      const c = rawPoint(e);
-                      const dx = c.x - d.start.x;
-                      const dy = c.y - d.start.y;
+                    onPointerMove={(event) => {
+                      const drag = edgeDrag.current;
+
+                      if (
+                        !drag ||
+                        !event.currentTarget.hasPointerCapture(event.pointerId)
+                      ) {
+                        return;
+                      }
+
+                      const current = rawPoint(event);
+                      const dx = current.x - drag.start.x;
+                      const dy = current.y - drag.start.y;
+
                       onSetPoints(
-                        d.areaId,
-                        d.orig.map((q, k) =>
-                          k === d.i || k === d.j ? { x: clampX(q.x + dx), y: clampY(q.y + dy) } : q,
-                        ),
+                        drag.areaId,
+                        drag.original.map((point, pointIndex) =>
+                          pointIndex === drag.i || pointIndex === drag.j
+                            ? {
+                                x: clampX(point.x + dx),
+                                y: clampY(point.y + dy),
+                              }
+                            : point
+                        )
                       );
                     }}
-                    onPointerUp={(e) => {
+                    onPointerUp={(event) => {
                       edgeDrag.current = null;
-                      e.currentTarget.releasePointerCapture(e.pointerId);
+
+                      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                        event.currentTarget.releasePointerCapture(event.pointerId);
+                      }
                     }}
                   />
                 );
-              }),
-            )}
-
-            {/* "+" in the middle of each edge: tap to add a corner there */}
-            {editable.flatMap((area) =>
-              area.points.map((p, i) => {
-                const q = area.points[(i + 1) % area.points.length];
-                const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
-                const [x, y] = toView(mid);
-                return (
-                  <g
-                    key={`mid-${area.id}-${i}`}
-                    style={{ cursor: "copy" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onInsertPoint(area.id, i, mid);
-                    }}
-                  >
-                    <circle cx={x} cy={y} r={9 * u} fill="#fff" stroke="#3B82F6" strokeWidth={2} vectorEffect="non-scaling-stroke" />
-                    <text
-                      x={x}
-                      y={y}
-                      fontSize={13 * u}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fill="#3B82F6"
-                      pointerEvents="none"
-                    >
-                      +
-                    </text>
-                  </g>
-                );
-              }),
-            )}
-
-            {/* corner handles, sized for a finger */}
-            {editable.flatMap((area) =>
-              area.points.map((p, i) => {
-                const [x, y] = toView(p);
-                const closesShape = !area.closed && i === 0 && area.points.length >= MIN_POINTS;
-                return (
-                  <circle
-                    key={`${area.id}-${i}`}
-                    cx={x}
-                    cy={y}
-                    r={(closesShape ? 14 : 11) * u}
-                    fill={closesShape ? "#16A34A" : "#3B82F6"}
-                    stroke="#fff"
-                    strokeWidth={2}
-                    vectorEffect="non-scaling-stroke"
-                    style={{ cursor: "grab", touchAction: "none" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // tapping the green first corner closes the shape (but not at the end of a drag)
-                      if (closesShape && !vertexMoved.current) onClose(area.id);
-                    }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      onRemovePoint(area.id, i);
-                    }}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      vertexMoved.current = false;
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                    }}
-                    onPointerMove={(e) => {
-                      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-                      vertexMoved.current = true;
-                      onMovePoint(area.id, i, toPoint(e));
-                    }}
-                  />
-                );
-              }),
+              })
             )}
           </svg>
 
-          {/* furniture is an HTML layer over the photo */}
           <FurnitureLayer
             items={furniture}
             selectedId={selectedFurnitureId}
@@ -333,7 +462,11 @@ export default function PhotoCanvas({
         </div>
       </div>
 
-      <p className="mt-2 min-h-5 text-xs text-ink/60" role="status" aria-live="polite">
+      <p
+        className="mt-2 min-h-5 text-xs text-ink/60"
+        role="status"
+        aria-live="polite"
+      >
         {notice}
       </p>
     </div>
