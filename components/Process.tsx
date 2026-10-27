@@ -9,7 +9,7 @@ export default function ProcessSection() {
       icon: <FiMonitor className="h-8 w-8" />,
     },
     {
-      id: "02",
+      id: "03",
       title: "Free Sample Box",
       description: "We deliver physical samples of your selected materials to your door so you can feel the quality.",
       icon: <FiBox className="h-8 w-8" />,
