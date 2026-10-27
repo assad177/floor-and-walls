@@ -1,474 +1,302 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import { useState } from "react";
 import { PRODUCTS_BY_ID } from "@/data/products";
 import { TEXTURES } from "@/data/textures";
-import {
-  MAX_AREAS,
-  MIN_POINTS,
-  isComplete,
-  type Area,
-  type AreaType,
-  type FurnitureItem,
-  type Point,
-} from "@/hooks/usePhotoDesign";
+import type { Area, FurnitureItem, Point } from "@/hooks/usePhotoDesign";
 import FurnitureLayer from "./Furniturelayer";
 
 interface Props {
   photoUrl: string;
   areas: Area[];
   products: Record<string, string | null>;
-  activeType: AreaType;
   furniture: FurnitureItem[];
   selectedFurnitureId: string | null;
-  onAddPoint: (point: Point) => boolean;
-  onClose: (areaId: string) => void;
-  onMovePoint: (areaId: string, index: number, point: Point) => void;
-  onSetPoints: (areaId: string, points: Point[]) => void;
-  onInsertPoint: (areaId: string, index: number, point: Point) => void;
-  onRemovePoint: (areaId: string, index: number) => void;
+  isLoading?: boolean;
+  loadingText?: string;
   onFurnitureSelect: (id: string | null) => void;
   onFurnitureUpdate: (id: string, patch: Partial<FurnitureItem>) => void;
 }
 
-const MARGIN = 6;
-const PADDING = MARGIN / (100 + 2 * MARGIN);
+function resolveSurfaceTexture(productId: string): {
+  src: string;
+  tile?: number;
+} | null {
+  if (TEXTURES[productId]) {
+    return TEXTURES[productId];
+  }
+  const prod = PRODUCTS_BY_ID[productId] as
+    | { image?: string; slot?: string }
+    | undefined;
+  if (prod?.image) {
+    return {
+      src: prod.image,
+      tile: prod.slot === "floor" ? 0.28 : undefined,
+    };
+  }
+  return null;
+}
 
-const AREA_COLORS: Record<AreaType, string> = {
-  wall: "#3B82F6",
-  floor: "#22C55E",
-  ceiling: "#A855F7",
-  window: "#F59E0B",
-};
+function isOpeningArea(area: Area): boolean {
+  const typeStr = String(area.type ?? "").toLowerCase();
+  const idStr = String(area.id ?? "").toLowerCase();
+  const nameStr = String((area as { name?: string }).name ?? "").toLowerCase();
+  return (
+    typeStr === "window" ||
+    typeStr === "door" ||
+    idStr.includes("window") ||
+    idStr.includes("door") ||
+    nameStr.includes("window") ||
+    nameStr.includes("door")
+  );
+}
 
 export default function PhotoCanvas({
   photoUrl,
   areas,
   products,
-  activeType,
   furniture,
   selectedFurnitureId,
-  onAddPoint,
-  onClose,
-  onMovePoint,
-  onSetPoints,
-  onInsertPoint,
-  onRemovePoint,
+  isLoading = false,
+  loadingText = "AI is mapping your room & styling bespoke concepts…",
   onFurnitureSelect,
   onFurnitureUpdate,
 }: Props) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-
-  const edgeDrag = useRef<{
-    areaId: string;
-    i: number;
-    j: number;
-    start: Point;
-    original: Point[];
-  } | null>(null);
-
-  const vertexMoved = useRef(false);
-
   const [aspect, setAspect] = useState(0.75);
-  const [width, setWidth] = useState(600);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    const element = wrapRef.current;
-    if (!element) return;
-
-    const observer = new ResizeObserver(([entry]) => {
-      setWidth(entry.contentRect.width);
-    });
-
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    setNotice(null);
-  }, [activeType]);
-
   const height = 100 * aspect;
-  const unit = 100 / Math.max(width * (1 - 2 * PADDING), 1);
 
   const toView = (point: Point): [number, number] => [
     point.x * 100,
     point.y * height,
   ];
 
-  const clampX = (value: number) =>
-    Math.min(1 + MARGIN / 100, Math.max(-MARGIN / 100, value));
+  const toPath = (points: Point[]) =>
+    points
+      .map((point, index) => {
+        const [x, y] = toView(point);
+        return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+      })
+      .join(" ") + " Z";
 
-  const clampY = (value: number) =>
-    Math.min(
-      1 + MARGIN / height,
-      Math.max(-MARGIN / height, value)
-    );
-
-  const rawPoint = (event: {
-    clientX: number;
-    clientY: number;
-  }): Point => {
-    const image = imgRef.current;
-    if (!image) return { x: 0, y: 0 };
-
-    const rect = image.getBoundingClientRect();
-
-    return {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height,
-    };
-  };
-
-  const toPoint = (event: {
-    clientX: number;
-    clientY: number;
-  }): Point => {
-    const point = rawPoint(event);
-
-    return {
-      x: clampX(point.x),
-      y: clampY(point.y),
-    };
-  };
-
-  const handleTap = (event: MouseEvent<SVGSVGElement>) => {
-    onFurnitureSelect(null);
-
-    const added = onAddPoint(toPoint(event));
-    const max = MAX_AREAS[activeType];
-
-    setNotice(
-      added
-        ? null
-        : `Only ${max} ${activeType}${max > 1 ? "s" : ""} can be marked. Use Clear to start again.`
-    );
-  };
-
-  const texturedIds = Array.from(
-    new Set(
-      Object.values(products).filter(
-        (id): id is string => Boolean(id && TEXTURES[id])
-      )
-    )
+  const activeProductIds = Array.from(
+    new Set(Object.values(products).filter((id): id is string => Boolean(id)))
   );
 
-  const editableAreas = areas.filter(
-    (area) => area.type === activeType && !area.closed
-  );
+  // Collect all window and door polygons (both standalone areas and embedded holes)
+  // so they are cleanly masked out and never painted over by walls or floors.
+  const openingPolygons: Point[][] = [];
+  areas.forEach((area) => {
+    if (isOpeningArea(area) && area.points.length >= 3) {
+      openingPolygons.push(area.points);
+    }
+    if (Array.isArray(area.holes)) {
+      area.holes.forEach((hole) => {
+        if (hole.length >= 3) openingPolygons.push(hole);
+      });
+    }
+  });
 
   return (
-    <div>
+    <div className="overflow-hidden rounded-xl bg-navy/5 p-2 shadow-inner">
       <div
-        ref={wrapRef}
-        className="rounded-xl bg-navy/5"
-        style={{ padding: `${PADDING * 100}%` }}
+        className="relative overflow-hidden rounded-lg"
+        onClick={() => onFurnitureSelect(null)}
       >
-        <div className="relative">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            ref={imgRef}
-            src={photoUrl}
-            alt="Your room"
-            className="block w-full select-none rounded-md"
-            draggable={false}
-            onLoad={(event) => {
-              const image = event.currentTarget;
-              if (image.naturalWidth) {
-                setAspect(image.naturalHeight / image.naturalWidth);
-              }
-            }}
-          />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={photoUrl}
+          alt="Your room"
+          className="block w-full select-none rounded-md"
+          draggable={false}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth) {
+              setAspect(image.naturalHeight / image.naturalWidth);
+            }
+          }}
+        />
 
-          <svg
-            viewBox={`-${MARGIN} -${MARGIN} ${100 + 2 * MARGIN} ${height + 2 * MARGIN}`}
-            style={{
-              position: "absolute",
-              left: `${-MARGIN}%`,
-              top: `${(-MARGIN / height) * 100}%`,
-              width: `${100 + 2 * MARGIN}%`,
-              height: `${((height + 2 * MARGIN) / height) * 100}%`,
-              overflow: "visible",
-              cursor: "crosshair",
-            }}
-            onClick={handleTap}
-          >
-            <defs>
-              <clipPath id="room-photo-clip">
-                <rect width="100" height={height} />
-              </clipPath>
+        <svg
+          viewBox={`0 0 100 ${height}`}
+          className="pointer-events-none absolute inset-0 h-full w-full"
+        >
+          <defs>
+            <clipPath id="room-photo-clip">
+              <rect width="100" height={height} />
+            </clipPath>
 
-              {texturedIds.map((id) => {
-                const texture = TEXTURES[id];
-                const size = texture.tile
-                  ? texture.tile * 100
-                  : undefined;
+            {/* Global Cut-Out Mask: Protects all Windows & Doors from Wall/Floor Paint Bleed */}
+            <mask id="room-openings-mask">
+              <rect width="100" height={height} fill="white" />
+              {openingPolygons.map((poly, idx) => (
+                <path key={`opening-cutout-${idx}`} d={toPath(poly)} fill="black" />
+              ))}
+            </mask>
 
+            {activeProductIds.map((id) => {
+              const tex = resolveSurfaceTexture(id);
+              const prod = PRODUCTS_BY_ID[id];
+
+              if (tex) {
+                const size = tex.tile ? tex.tile * 100 : undefined;
                 return (
                   <pattern
                     key={id}
                     id={`room-texture-${id}`}
                     patternUnits={
-                      texture.tile ? "userSpaceOnUse" : "objectBoundingBox"
+                      tex.tile ? "userSpaceOnUse" : "objectBoundingBox"
                     }
                     width={size ?? 1}
                     height={size ?? 1}
                   >
                     <image
-                      href={texture.src}
-                      width={texture.tile ? size : "100%"}
-                      height={texture.tile ? size : "100%"}
+                      href={tex.src}
+                      width={tex.tile ? size : "100%"}
+                      height={tex.tile ? size : "100%"}
                       preserveAspectRatio="none"
                     />
                   </pattern>
                 );
-              })}
-            </defs>
+              }
 
-            <g clipPath="url(#room-photo-clip)" pointerEvents="none">
-              {areas.map((area) => {
-                const points = area.points
-                  .map((point) => {
-                    const [x, y] = toView(point);
-                    return `${x},${y}`;
-                  })
-                  .join(" ");
-
-                // Each area gets its own product; windows remain unpainted.
-                const productId =
-                  area.type === "window" ? null : products[area.id];
-
-                const product = productId
-                  ? PRODUCTS_BY_ID[productId]
-                  : undefined;
-
-                const fill = product
-                  ? TEXTURES[product.id]
-                    ? `url(#room-texture-${product.id})`
-                    : product.color
-                  : AREA_COLORS[area.type];
-
-                const stroke =
-                  area.type === activeType ? AREA_COLORS[area.type] : "#FFFFFF";
-
-                return (
-                  <g key={area.id}>
-                    <polygon
-                      points={points}
-                      fill={fill}
-                      fillOpacity={
-                        product ? 0.92 : area.type === "window" ? 0.45 : 0.25
-                      }
-                      style={
-                        product ? { mixBlendMode: "multiply" } : undefined
-                      }
-                    />
-
-                    {isComplete(area) ? (
-                      <polygon
-                        points={points}
-                        fill="none"
-                        stroke={stroke}
-                        strokeWidth={area.type === activeType ? 2 : 1}
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    ) : (
-                      <polyline
-                        points={points}
-                        fill="none"
-                        stroke={stroke}
-                        strokeWidth={2}
-                        strokeDasharray="6 4"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    )}
-                  </g>
-                );
-              })}
-            </g>
-
-            {editableAreas.flatMap((area) =>
-              area.points.map((point, index) => {
-                const next = area.points[(index + 1) % area.points.length];
-                const midpoint = {
-                  x: (point.x + next.x) / 2,
-                  y: (point.y + next.y) / 2,
-                };
-                const [x, y] = toView(midpoint);
-
-                return (
-                  <g
-                    key={`mid-${area.id}-${index}`}
-                    style={{ cursor: "copy" }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onInsertPoint(area.id, index, midpoint);
-                    }}
-                  >
-                    <circle
-                      cx={x}
-                      cy={y}
-                      r={9 * unit}
-                      fill="#FFFFFF"
-                      stroke={AREA_COLORS[area.type]}
-                      strokeWidth={2}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                    <text
-                      x={x}
-                      y={y}
-                      fontSize={13 * unit}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fill={AREA_COLORS[area.type]}
-                      pointerEvents="none"
+              if (prod?.pattern && prod.pattern !== "plain") {
+                if (prod.pattern === "panel") {
+                  return (
+                    <pattern
+                      key={id}
+                      id={`room-texture-${id}`}
+                      patternUnits="userSpaceOnUse"
+                      width="3.2"
+                      height="12"
                     >
-                      +
-                    </text>
-                  </g>
-                );
-              })
-            )}
+                      <rect width="3.2" height="12" fill={prod.color} />
+                      <rect
+                        x="2.4"
+                        width="0.8"
+                        height="12"
+                        fill="rgba(0,0,0,0.22)"
+                      />
+                    </pattern>
+                  );
+                }
+                if (prod.pattern === "plank") {
+                  return (
+                    <pattern
+                      key={id}
+                      id={`room-texture-${id}`}
+                      patternUnits="userSpaceOnUse"
+                      width="16"
+                      height="4.5"
+                    >
+                      <rect width="16" height="4.5" fill={prod.color} />
+                      <line
+                        x1="0"
+                        y1="4.5"
+                        x2="16"
+                        y2="4.5"
+                        stroke="rgba(0,0,0,0.18)"
+                        strokeWidth="0.35"
+                      />
+                      <line
+                        x1="8"
+                        y1="0"
+                        x2="8"
+                        y2="4.5"
+                        stroke="rgba(0,0,0,0.12)"
+                        strokeWidth="0.25"
+                      />
+                    </pattern>
+                  );
+                }
+                if (prod.pattern === "tile") {
+                  return (
+                    <pattern
+                      key={id}
+                      id={`room-texture-${id}`}
+                      patternUnits="userSpaceOnUse"
+                      width="10"
+                      height="10"
+                    >
+                      <rect width="10" height="10" fill={prod.color} />
+                      <path
+                        d="M 10 0 L 0 0 0 10"
+                        fill="none"
+                        stroke="rgba(255,255,255,0.22)"
+                        strokeWidth="0.4"
+                      />
+                    </pattern>
+                  );
+                }
+              }
 
-            {editableAreas.flatMap((area) =>
-              area.points.map((point, index) => {
-                const [x, y] = toView(point);
-                const canClose =
-                  index === 0 && area.points.length >= MIN_POINTS;
+              return null;
+            })}
+          </defs>
 
-                return (
-                  <circle
-                    key={`${area.id}-${index}`}
-                    cx={x}
-                    cy={y}
-                    r={(canClose ? 14 : 11) * unit}
-                    fill={canClose ? "#16A34A" : AREA_COLORS[area.type]}
-                    stroke="#FFFFFF"
-                    strokeWidth={2}
-                    vectorEffect="non-scaling-stroke"
-                    style={{ cursor: "grab", touchAction: "none" }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (canClose && !vertexMoved.current) {
-                        onClose(area.id);
-                      }
-                    }}
-                    onDoubleClick={(event) => {
-                      event.stopPropagation();
-                      onRemovePoint(area.id, index);
-                    }}
-                    onPointerDown={(event) => {
-                      event.stopPropagation();
-                      vertexMoved.current = false;
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                    }}
-                    onPointerMove={(event) => {
-                      if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-                        return;
-                      }
+          <g clipPath="url(#room-photo-clip)" mask="url(#room-openings-mask)">
+            {areas.map((area) => {
+              // Never paint over windows or doors
+              if (isOpeningArea(area)) return null;
 
-                      vertexMoved.current = true;
-                      onMovePoint(area.id, index, toPoint(event));
-                    }}
-                    onPointerUp={(event) => {
-                      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                        event.currentTarget.releasePointerCapture(event.pointerId);
-                      }
-                    }}
+              const productId = products[area.id];
+              const product = productId ? PRODUCTS_BY_ID[productId] : undefined;
+              if (!product) return null;
+
+              const hasPatternOrTexture = Boolean(
+                resolveSurfaceTexture(product.id) ||
+                  (product.pattern && product.pattern !== "plain")
+              );
+
+              const fill = hasPatternOrTexture
+                ? `url(#room-texture-${product.id})`
+                : product.color;
+
+              const holes = area.holes ?? [];
+              const pathData = [
+                toPath(area.points),
+                ...holes.map((hole) => toPath(hole)),
+              ].join(" ");
+
+              // Tuned opacity so original room shadows, corners, and moldings remain visible
+              const fillOpacity =
+                area.type === "wall"
+                  ? 0.82
+                  : area.type === "ceiling"
+                    ? 0.85
+                    : 0.88;
+
+              return (
+                <g key={`${area.id}-${product.id}`}>
+                  <path
+                    d={pathData}
+                    fill={fill}
+                    fillRule="evenodd"
+                    fillOpacity={fillOpacity}
+                    style={{ mixBlendMode: "multiply" }}
                   />
-                );
-              })
-            )}
+                </g>
+              );
+            })}
+          </g>
+        </svg>
 
-            {editableAreas.flatMap((area) =>
-              area.points.map((point, index) => {
-                const nextIndex = (index + 1) % area.points.length;
-                const next = area.points[nextIndex];
-                const [x1, y1] = toView(point);
-                const [x2, y2] = toView(next);
+        <FurnitureLayer
+          items={furniture}
+          selectedId={selectedFurnitureId}
+          onSelect={onFurnitureSelect}
+          onUpdate={onFurnitureUpdate}
+        />
 
-                return (
-                  <line
-                    key={`edge-${area.id}-${index}`}
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke="transparent"
-                    strokeWidth={18}
-                    vectorEffect="non-scaling-stroke"
-                    style={{ cursor: "move", touchAction: "none" }}
-                    onClick={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => {
-                      event.stopPropagation();
-                      event.currentTarget.setPointerCapture(event.pointerId);
-
-                      edgeDrag.current = {
-                        areaId: area.id,
-                        i: index,
-                        j: nextIndex,
-                        start: rawPoint(event),
-                        original: area.points,
-                      };
-                    }}
-                    onPointerMove={(event) => {
-                      const drag = edgeDrag.current;
-
-                      if (
-                        !drag ||
-                        !event.currentTarget.hasPointerCapture(event.pointerId)
-                      ) {
-                        return;
-                      }
-
-                      const current = rawPoint(event);
-                      const dx = current.x - drag.start.x;
-                      const dy = current.y - drag.start.y;
-
-                      onSetPoints(
-                        drag.areaId,
-                        drag.original.map((point, pointIndex) =>
-                          pointIndex === drag.i || pointIndex === drag.j
-                            ? {
-                                x: clampX(point.x + dx),
-                                y: clampY(point.y + dy),
-                              }
-                            : point
-                        )
-                      );
-                    }}
-                    onPointerUp={(event) => {
-                      edgeDrag.current = null;
-
-                      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                        event.currentTarget.releasePointerCapture(event.pointerId);
-                      }
-                    }}
-                  />
-                );
-              })
-            )}
-          </svg>
-
-          <FurnitureLayer
-            items={furniture}
-            selectedId={selectedFurnitureId}
-            onSelect={onFurnitureSelect}
-            onUpdate={onFurnitureUpdate}
-          />
-        </div>
+        {isLoading && (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-navy/65 p-6 text-center text-white backdrop-blur-xs">
+            <div className="mb-3 h-10 w-10 animate-spin rounded-full border-4 border-white/30 border-t-gold" />
+            <p className="font-serif text-lg font-medium">{loadingText}</p>
+            <p className="mt-1 text-xs text-white/75">
+              Please wait while our AI detects room surfaces and curates matching products…
+            </p>
+          </div>
+        )}
       </div>
-
-      <p
-        className="mt-2 min-h-5 text-xs text-ink/60"
-        role="status"
-        aria-live="polite"
-      >
-        {notice}
-      </p>
     </div>
   );
 }

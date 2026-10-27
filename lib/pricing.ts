@@ -17,11 +17,6 @@ export interface AreaMaterial {
   areaId: string;
   slot: "floor" | "wall" | "ceiling";
   productId: string;
-  /**
-   * Optional measured area in square metres.
-   * Falls back to ROOM_AREA_SQM for floor/ceiling
-   * and 1 for wall if measurement is not available.
-   */
   areaSqm?: number;
 }
 
@@ -55,10 +50,7 @@ function createLine(
   };
 }
 
-/**
- * Backward-compatible with the old buildBill(design, withFitting, extras)
- * signature, while also supporting area-by-area materials.
- */
+
 export function buildBill(
   designOrOptions: Design | BuildBillOptions,
   withFittingArg?: boolean,
@@ -84,8 +76,6 @@ export function buildBill(
   } = options;
 
   const lines: BillLine[] = [];
-
-  // Area-based materials: every selected area gets its own bill line.
   for (const area of areaMaterials) {
     const product = PRODUCTS_BY_ID[area.productId];
     if (!product) continue;
@@ -113,8 +103,7 @@ export function buildBill(
     }
   }
 
-  // Legacy slot-based materials. Do not duplicate slots already
-  // represented by areaMaterials.
+
   if (design) {
     const representedSlots = new Set(
       areaMaterials.map((area) => area.slot),

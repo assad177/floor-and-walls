@@ -1,10 +1,19 @@
-
 import { PRODUCTS } from "@/data/products";
 import type { Product, Slot } from "@/lib/types";
 
 export interface DesignArea {
   id: string;
   type: "floor" | "wall" | "ceiling" | "window";
+}
+
+export interface DesignPlacement {
+  id: string;
+  slot: string;
+  productId: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotation?: number;
 }
 
 export interface GeneratedDesign {
@@ -14,6 +23,7 @@ export interface GeneratedDesign {
   areaProducts: Record<string, string | null>;
   furnitureProductIds: string[];
   curtainProductId: string | null;
+  placements?: DesignPlacement[]; // AI & Geometry coordinates yahan store honge
 }
 
 interface DesignStyle {
@@ -82,7 +92,6 @@ const STYLES: DesignStyle[] = [
   },
 ];
 
-
 function getProduct(
   slot: Slot,
   preferredIds: string[],
@@ -104,8 +113,9 @@ function getProduct(
   return available[styleIndex % available.length];
 }
 
-
 export function generateDesigns(areas: DesignArea[]): GeneratedDesign[] {
+  const hasWindow = areas.some((area) => area.type === "window");
+
   return STYLES.map((style, styleIndex) => {
     const areaProducts: Record<string, string | null> = {};
 
@@ -137,11 +147,9 @@ export function generateDesigns(areas: DesignArea[]): GeneratedDesign[] {
       return product ? [product.id] : [];
     });
 
-    const curtain = getProduct(
-      "curtain",
-      style.preferred.curtain ?? [],
-      styleIndex,
-    );
+    const curtain = hasWindow
+      ? getProduct("curtain", style.preferred.curtain ?? [], styleIndex)
+      : undefined;
 
     return {
       id: style.id,

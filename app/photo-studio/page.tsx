@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -6,9 +5,8 @@ import { useMemo, useState } from "react";
 import BillPanel from "@/components/BillPanel";
 import FurnitureBar from "@/components/photo/FurnitureBar";
 import PhotoCanvas from "@/components/photo/PhotoCanvas";
-import PhotoInstructions from "@/components/photo/PhotoInstructions";
-import PhotoToolbar from "@/components/photo/PhotoToolbar";
 import PhotoUpload from "@/components/photo/PhotoUpload";
+import PhotoInstructions from "@/components/photo/PhotoInstructions";
 import { PRODUCTS, PRODUCTS_BY_ID } from "@/data/products";
 import {
   EMPTY_DESIGN,
@@ -16,15 +14,13 @@ import {
   ROOM_AREA_SQM,
 } from "@/lib/config";
 import {
-  isComplete,
+  mapSegmentationAreas,
   usePhotoDesign,
+  type Area,
   type AreaType,
   type SegmentationResponse,
 } from "@/hooks/usePhotoDesign";
-import {
-  generateDesigns,
-  type GeneratedDesign,
-} from "@/lib/design-engine";
+import type { GeneratedDesign } from "@/lib/design-engine";
 import { buildBill } from "@/lib/pricing";
 import type { Design, Slot } from "@/lib/types";
 
@@ -40,7 +36,28 @@ const EDITABLE_SLOTS: Slot[] = [
   "joinery",
 ];
 
-const isAreaSlot = (slot: Slot): slot is AreaType =>
+interface ApiPlacement {
+  id: string;
+  slot: Slot;
+  productId: string;
+  x: number;
+  y: number;
+  scale: number;
+  scaleY?: number;
+  rotation?: number;
+  angle?: number;
+  flipped?: boolean;
+}
+
+interface ApiGeneratedDesign {
+  id: string;
+  name: string;
+  blurb: string;
+  products?: Partial<Record<AreaType, string | null>>;
+  placements?: ApiPlacement[];
+}
+
+const isAreaSlot = (slot: string): slot is AreaType =>
   AREA_SLOTS.includes(slot as AreaType);
 
 export default function PhotoStudioPage() {
@@ -49,183 +66,177 @@ export default function PhotoStudioPage() {
     setPhoto,
     removePhoto,
     areas,
-    addPoint,
-    closeArea,
-    finish,
-    canFinish,
-    setPoints,
-    movePoint,
-    insertPoint,
-    removePoint,
-    undoPoint,
-    clearType,
     removeArea,
-    canUndo,
     products,
     setProduct,
-    activeType,
-    setActiveType,
     furniture,
     addFurniture,
     updateFurniture,
     removeFurniture,
+    clearFurniture,
     selectedFurnitureId,
     setSelectedFurnitureId,
     importSegmentation,
   } = usePhotoDesign();
 
   const [withFitting, setWithFitting] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState<"idle" | "segmenting" | "generating">("idle");
   const [segmentError, setSegmentError] = useState<string | null>(null);
 
-  const [generatedDesigns, setGeneratedDesigns] = useState<
-    GeneratedDesign[]
-  >([]);
-  const [selectedDesignId, setSelectedDesignId] = useState<string | null>(
-    null,
-  );
+  const [generatedDesigns, setGeneratedDesigns] = useState<GeneratedDesign[]>([]);
+  const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null);
 
   const [editSlot, setEditSlot] = useState<Slot>("floor");
   const [showEditOptions, setShowEditOptions] = useState(false);
 
-  // Adapt area-keyed products to the existing pricing API.
-  // The current buildBill API supports only one product per slot.
+  const isProcessing = processingStep !== "idle";
+
   const design: Design = useMemo(() => {
     const result = { ...EMPTY_DESIGN };
-
     for (const slot of AREA_SLOTS) {
       const area = areas.find((item) => item.type === slot);
-      result[slot] = area ? products[area.id] ?? null : null;
+      (result as Record<string, string | null>)[slot] = area
+        ? products[area.id] ?? null
+        : null;
     }
-
     return result;
   }, [areas, products]);
 
   const extras = useMemo(() => {
     const counts = new Map<string, number>();
-
     furniture.forEach((item) => {
-      counts.set(
-        item.productId,
-        (counts.get(item.productId) ?? 0) + 1,
-      );
+      counts.set(item.productId, (counts.get(item.productId) ?? 0) + 1);
     });
-
-    return Array.from(counts, ([productId, qty]) => ({
-      productId,
-      qty,
-    }));
+    return Array.from(counts, ([productId, qty]) => ({ productId, qty }));
   }, [furniture]);
 
   const bill = useMemo(
     () => buildBill(design, withFitting, extras),
-    [design, withFitting, extras],
+    [design, withFitting, extras]
   );
 
-  const selectedItem = furniture.find(
-    (item) => item.id === selectedFurnitureId,
-  );
+  const selectedItem = furniture.find((item) => item.id === selectedFurnitureId);
 
-  const applyDesign = (nextDesign: GeneratedDesign) => {
-    // Apply the selected material to each individual area.
-    for (const area of areas) {
+  const applyDesign = (nextDesign: GeneratedDesign, freshAreas?: Area[]) => {
+    const effectiveAreas = freshAreas ?? areas;
+
+    for (const area of effectiveAreas) {
       if (area.type === "window") continue;
-
-      setProduct(
-        area.id,
-        nextDesign.areaProducts[area.id] ?? null,
-      );
+      setProduct(area.id, nextDesign.areaProducts[area.id] ?? null);
     }
 
-    // Replace furniture from the previous design.
-    furniture.forEach((item) => removeFurniture(item.id));
+    clearFurniture();
 
-    nextDesign.furnitureProductIds.forEach((productId) => {
-      const product = PRODUCTS_BY_ID[productId];
-      if (!product) return;
+    if (nextDesign.placements && nextDesign.placements.length > 0) {
+      nextDesign.placements.forEach((placement) => {
+        if (!PRODUCTS_BY_ID[placement.productId]) return;
+        addFurniture(placement.productId, placement.scale, {
+          x: placement.x,
+          y: placement.y,
+          scaleY: (placement as ApiPlacement).scaleY,
+          angle: (placement as ApiPlacement).angle,
+          rotation: placement.rotation,
+          flipped: (placement as ApiPlacement).flipped,
+        });
+      });
+    } else {
+      nextDesign.furnitureProductIds.forEach((productId) => {
+        const product = PRODUCTS_BY_ID[productId];
+        if (!product) return;
+        addFurniture(productId, FURNITURE_WIDTH[product.slot] ?? 0.25);
+      });
 
-      addFurniture(
-        productId,
-        FURNITURE_WIDTH[product.slot] ?? 0.25,
-      );
-    });
-
-    // Curtains use the existing furniture overlay.
-    if (nextDesign.curtainProductId) {
-      addFurniture(
-        nextDesign.curtainProductId,
-        FURNITURE_WIDTH.curtain ?? 0.25,
-      );
+      if (nextDesign.curtainProductId) {
+        addFurniture(
+          nextDesign.curtainProductId,
+          FURNITURE_WIDTH.curtain ?? 0.25
+        );
+      }
     }
 
+    setSelectedFurnitureId(null);
     setSelectedDesignId(nextDesign.id);
   };
 
   const handleFileSelect = async (file: File) => {
-    setIsProcessing(true);
+    setProcessingStep("segmenting");
     setSegmentError(null);
     setGeneratedDesigns([]);
     setSelectedDesignId(null);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const response = await fetch(
-        "http://localhost:8000/api/v1/segment-room",
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
+      const formData = new FormData();
+      formData.append("file", file);
 
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "Failed to analyze room.");
+      const analyzeRes = await fetch("/api/analyze-room", {
+        method: "POST",
+        body: formData,
+      });
+
+      const analyzeResult = await analyzeRes.json();
+      if (!analyzeRes.ok) {
+        throw new Error(analyzeResult.error || "Failed to analyze room.");
       }
 
-      const data: SegmentationResponse = await response.json();
-
-      // Import polygons into the existing hook.
+      const data: SegmentationResponse = analyzeResult.segmentation;
       importSegmentation(data);
 
-      // Generate all design options from the detected area IDs.
-      const detectedAreas = data.areas.length
-        ? data.areas
-        : [];
-
-      // Use the same mapper as the hook to preserve area IDs.
-      const { mapSegmentationAreas } = await import(
-        "@/hooks/usePhotoDesign"
-      );
-
       const mappedAreas = mapSegmentationAreas(data);
-
       if (mappedAreas.length === 0) {
         throw new Error("No usable room areas were detected.");
       }
 
-      const designs = generateDesigns(mappedAreas);
-      setGeneratedDesigns(designs);
+      setProcessingStep("generating");
 
-      // Automatically apply the first design.
-      if (designs.length > 0) {
-        applyDesign(designs[0]);
+      const generateRes = await fetch("/api/generate-designs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(analyzeResult),
+      });
+
+      const generateResult = await generateRes.json();
+      if (!generateRes.ok) {
+        throw new Error(generateResult.error || "Failed to generate designs.");
       }
+
+      const rawDesigns: ApiGeneratedDesign[] = generateResult.designs ?? [];
+
+      const aiDesigns: GeneratedDesign[] = rawDesigns.map((d) => {
+        const placements = d.placements ?? [];
+        const curtainPlacement = placements.find((p) => p.slot === "curtain");
+        const furniturePlacements = placements.filter((p) => p.slot !== "curtain");
+
+        return {
+          id: d.id,
+          name: d.name,
+          blurb: d.blurb,
+          areaProducts: Object.fromEntries(
+            mappedAreas
+              .filter((area) => ["floor", "wall", "ceiling"].includes(area.type))
+              .map((area) => [area.id, d.products?.[area.type] ?? null])
+          ),
+          furnitureProductIds: furniturePlacements.map((p) => p.productId),
+          curtainProductId: curtainPlacement?.productId ?? null,
+          placements,
+        };
+      });
+
+      if (aiDesigns.length === 0) {
+        throw new Error("AI did not return any design options.");
+      }
+
+      setGeneratedDesigns(aiDesigns);
+      applyDesign(aiDesigns[0], mappedAreas);
     } catch (error: unknown) {
       console.error("Room design error:", error);
       setSegmentError(
         error instanceof Error
           ? error.message
-          : "Could not analyze this room photo.",
+          : "Could not analyze this room photo."
       );
     } finally {
-      setIsProcessing(false);
+      setProcessingStep("idle");
     }
-  };
-
-  const handleTypeChange = (type: AreaType) => {
-    setActiveType(type);
   };
 
   const handleBillRemove = (slot: Slot) => {
@@ -249,42 +260,36 @@ export default function PhotoStudioPage() {
         setProduct(area.id, null);
       }
     });
-
-    furniture.forEach((item) => removeFurniture(item.id));
-    setGeneratedDesigns([]);
+    clearFurniture();
     setSelectedDesignId(null);
   };
 
-  // Edit one category without asking the user to build the whole room.
   const replaceProduct = (productId: string) => {
     const product = PRODUCTS_BY_ID[productId];
     if (!product) return;
 
     if (isAreaSlot(editSlot)) {
-      const matchingAreas = areas.filter(
-        (area) => area.type === editSlot,
-      );
-
-      matchingAreas.forEach((area) => {
-        setProduct(area.id, productId);
-      });
-
+      areas
+        .filter((area) => area.type === editSlot)
+        .forEach((area) => setProduct(area.id, productId));
       return;
     }
 
-    // Replace the existing furniture item(s) in the chosen category.
-    furniture
-      .filter((item) => PRODUCTS_BY_ID[item.productId]?.slot === editSlot)
-      .forEach((item) => removeFurniture(item.id));
-
-    addFurniture(
-      productId,
-      FURNITURE_WIDTH[editSlot] ?? 0.25,
+    const existingItems = furniture.filter(
+      (item) => PRODUCTS_BY_ID[item.productId]?.slot === editSlot
     );
+
+    if (existingItems.length > 0) {
+      existingItems.forEach((item) =>
+        updateFurniture(item.id, { productId })
+      );
+    } else {
+      addFurniture(productId, FURNITURE_WIDTH[editSlot] ?? 0.25);
+    }
   };
 
   const selectedEditProducts = PRODUCTS.filter(
-    (product) => product.slot === editSlot,
+    (product) => product.slot === editSlot
   );
 
   return (
@@ -293,13 +298,8 @@ export default function PhotoStudioPage() {
         <Link href="/" className="text-sm text-navy hover:underline">
           ← Back to Home
         </Link>
-
         <span className="text-ink/30">|</span>
-
-        <h1 className="font-serif text-2xl text-navy">
-          AI Room Designer
-        </h1>
-
+        <h1 className="font-serif text-2xl text-navy">AI Room Designer</h1>
         <span className="ml-auto rounded-full bg-gold/20 px-3 py-1 text-xs font-semibold text-navy">
           BETA
         </span>
@@ -318,14 +318,8 @@ export default function PhotoStudioPage() {
             photoUrl={photoUrl}
           />
 
-          {isProcessing && (
-            <div className="animate-pulse rounded-xl bg-navy/5 p-3 text-center text-sm font-medium text-navy">
-              AI is analyzing your room and preparing design options...
-            </div>
-          )}
-
           {segmentError && (
-            <p role="alert" className="text-sm text-red-600">
+            <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
               {segmentError}
             </p>
           )}
@@ -340,7 +334,7 @@ export default function PhotoStudioPage() {
                         Your AI Designs
                       </h2>
                       <p className="mt-1 text-sm text-ink/60">
-                        Choose a complete look. You can edit individual items later.
+                        Choose a complete look. You can customize individual items or drag furniture below.
                       </p>
                     </div>
                   </div>
@@ -360,15 +354,12 @@ export default function PhotoStudioPage() {
                         <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-ink/50">
                           Design {index + 1}
                         </span>
-
                         <span className="block font-semibold text-navy">
                           {item.name}
                         </span>
-
                         <span className="mt-1 block text-sm text-ink/70">
                           {item.blurb}
                         </span>
-
                         <span className="mt-3 block text-xs font-semibold text-navy">
                           {selectedDesignId === item.id
                             ? "✓ Currently applied"
@@ -432,29 +423,18 @@ export default function PhotoStudioPage() {
                 </section>
               )}
 
-              <PhotoToolbar
-                activeType={activeType}
-                onTypeChange={handleTypeChange}
-                onUndo={undoPoint}
-                onClear={() => clearType(activeType)}
-                canUndo={canUndo}
-                onFinish={finish}
-                canFinish={canFinish}
-              />
-
               <PhotoCanvas
                 photoUrl={photoUrl}
                 areas={areas}
                 products={products}
-                activeType={activeType}
                 furniture={furniture}
                 selectedFurnitureId={selectedFurnitureId}
-                onAddPoint={addPoint}
-                onClose={closeArea}
-                onMovePoint={movePoint}
-                onSetPoints={setPoints}
-                onInsertPoint={insertPoint}
-                onRemovePoint={removePoint}
+                isLoading={isProcessing}
+                loadingText={
+                  processingStep === "segmenting"
+                    ? "Step 1/2: AI is detecting walls, floor, ceiling & windows…"
+                    : "Step 2/2: Generating 4 custom floor-to-ceiling room designs…"
+                }
                 onFurnitureSelect={setSelectedFurnitureId}
                 onFurnitureUpdate={updateFurniture}
               />
@@ -462,9 +442,7 @@ export default function PhotoStudioPage() {
               {selectedItem && (
                 <FurnitureBar
                   item={selectedItem}
-                  onUpdate={(patch) =>
-                    updateFurniture(selectedItem.id, patch)
-                  }
+                  onUpdate={(patch) => updateFurniture(selectedItem.id, patch)}
                   onRemove={() => removeFurniture(selectedItem.id)}
                 />
               )}
@@ -472,16 +450,13 @@ export default function PhotoStudioPage() {
               {areas.length > 0 && (
                 <div className="rounded-xl bg-white p-4 shadow-sm">
                   <h3 className="mb-2 text-sm font-semibold text-navy">
-                    Detected Areas ({areas.length})
+                    Detected Surfaces ({areas.length})
                   </h3>
 
                   <ul className="space-y-1.5">
                     {areas.map((area) => {
                       const productId =
-                        area.type === "window"
-                          ? null
-                          : products[area.id];
-
+                        area.type === "window" ? null : products[area.id];
                       const product = productId
                         ? PRODUCTS_BY_ID[productId]
                         : undefined;
@@ -496,12 +471,10 @@ export default function PhotoStudioPage() {
                               {area.type}
                             </span>
                             <span className="ml-2 text-xs text-ink/60">
-                              {isComplete(area)
-                                ? product?.name ??
-                                  (area.type === "window"
-                                    ? "Not paintable"
-                                    : "No material applied")
-                                : `${area.points.length} points`}
+                              {product?.name ??
+                                (area.type === "window"
+                                  ? "Window (Curtain target)"
+                                  : "No material applied")}
                             </span>
                           </span>
 
@@ -526,8 +499,7 @@ export default function PhotoStudioPage() {
               </p>
             </>
           )}
-
-          <PhotoInstructions />
+          <PhotoInstructions/>
         </section>
 
         <aside className="lg:sticky lg:top-20">

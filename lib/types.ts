@@ -1,4 +1,4 @@
-export type Slot = "floor" | "wall" | "curtain" | "joinery" | "sofa" | "table" |"ceiling";
+export type Slot = "floor" | "wall" | "curtain" | "joinery" | "sofa" | "table" | "ceiling";
 export type Pattern = "plain" | "plank" | "tile" | "panel";
 export type Unit = "sqm" | "each";
 
@@ -6,10 +6,13 @@ export interface Product {
   id: string;
   slot: Slot;
   name: string;
-  price: number; // supply price per unit
+  price: number;
   unit: Unit;
-  color: string; // 6-digit hex, used by the room preview
+  color: string;
   pattern?: Pattern;
+  image?: string;
+  canvasSize?: { width: number; height: number };
+  placement?: "floor" | "wall";
 }
 
 /** The id of the chosen product per slot, or null when nothing is chosen. */
@@ -19,7 +22,7 @@ export interface Theme {
   id: string;
   name: string;
   blurb: string;
-  image: string;        // ← NAYA — thumbnail photo
+  image: string;
   design: Design;
 }
 
@@ -44,6 +47,7 @@ export interface Positions {
   sofa?: { x: number; y: number };
   table?: { x: number; y: number };
 }
+
 export interface Position {
   x: number;
   y: number;
@@ -52,17 +56,4 @@ export interface Position {
 export interface DesignWithPositions {
   design: Design;
   positions: Positions;
-}
-
-export interface Product {
-  id: string;
-  slot: Slot;
-  name: string;
-  price: number;
-  unit: Unit;
-  color: string;
-  pattern?: Pattern;
-  image?: string;  
-  canvasSize?: { width: number; height: number }; 
-  placement?: "floor" | "wall";    // ← yeh add karo (optional)
 }

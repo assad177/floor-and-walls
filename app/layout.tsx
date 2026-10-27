@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Footer from "@/components/Footer";
 import Header from "@/components/Header";
 import "./globals.css";
+import ProductMegaMenu from "@/components/ProductMegaMenu";
 
 export const metadata: Metadata = {
   title: "Floors & Walls | Interactive Space Designer",
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <Header />
+        {/* <ProductMegaMenu visualizerHref="#workspace" /> */}
         <main>{children}</main>
         <Footer />
       </body>

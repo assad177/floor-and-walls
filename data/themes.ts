@@ -9,6 +9,7 @@ export const THEMES: Theme[] = [
     design: {
       floor: "floor-oak",
       wall: "wall-cream",
+      ceiling: "ceiling-white",
       curtain: "blind-grey",
       joinery: "joinery-slat",
       sofa: "sofa-grey",
@@ -23,6 +24,7 @@ export const THEMES: Theme[] = [
     design: {
       floor: "floor-oak",
       wall: "wall-navy",
+      ceiling: "ceiling-warm",
       curtain: "curtain-green",
       joinery: "joinery-walnut",
       sofa: "sofa-terracotta",
@@ -37,6 +39,7 @@ export const THEMES: Theme[] = [
     design: {
       floor: "floor-tile",
       wall: "wall-charcoal",
+      ceiling: "ceiling-white",
       curtain: "blind-grey",
       joinery: "joinery-navy",
       sofa: "sofa-grey",
@@ -51,6 +54,7 @@ export const THEMES: Theme[] = [
     design: {
       floor: "floor-grey-lvp",
       wall: "wall-sage",
+      ceiling: "ceiling-coffered",
       curtain: "curtain-linen",
       joinery: "joinery-slat",
       sofa: "sofa-navy",

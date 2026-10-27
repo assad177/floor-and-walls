@@ -6,7 +6,7 @@ const MAX_MB = 20;
 
 interface Props {
   onPhotoSelect: (url: string) => void;
-  onFileSelect?: (file: File) => void; // Nayi prop backend ke liye
+  onFileSelect?: (file: File) => void;
   onRemove: () => void;
   photoUrl?: string | null;
 }
@@ -17,18 +17,16 @@ export default function PhotoUpload({ onPhotoSelect, onFileSelect, onRemove, pho
   const currentUrl = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** Frees the memory held by the previous photo. */
   const release = () => {
     if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
     currentUrl.current = null;
   };
 
-  // free the photo when this component leaves the page
-  useEffect(() => release, [],);
+  useEffect(() => release, []);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // lets the user pick the same file again later
+    e.target.value = "";
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
@@ -43,14 +41,9 @@ export default function PhotoUpload({ onPhotoSelect, onFileSelect, onRemove, pho
     setError(null);
     release();
     currentUrl.current = URL.createObjectURL(file);
-    
-    // Preview ke liye URL pass karein
+
     onPhotoSelect(currentUrl.current);
-    
-    // Backend API ke liye asli File object pass karein
-    if (onFileSelect) {
-      onFileSelect(file);
-    }
+    onFileSelect?.(file);
   };
 
   const handleRemove = () => {
@@ -85,7 +78,9 @@ export default function PhotoUpload({ onPhotoSelect, onFileSelect, onRemove, pho
         <p className="mt-1 text-sm text-ink/60">
           Stand straight on, in a well-lit room, so the floor and walls are clearly visible.
         </p>
-        <p className="mt-1 text-xs text-ink/50">Your photo stays on your device and is not uploaded.</p>
+        <p className="mt-1 text-xs text-ink/50">
+          AI will automatically detect your walls, floor, ceiling, and windows in seconds.
+        </p>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row">

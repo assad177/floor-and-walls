@@ -1,7 +1,6 @@
 import { money } from "./pricing";
 import type { Bill } from "./types";
 
-/** Builds and downloads the design summary PDF. jsPDF is loaded on demand (browser only). */
 export async function downloadDesignPdf(bill: Bill, withFitting: boolean): Promise<void> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF();

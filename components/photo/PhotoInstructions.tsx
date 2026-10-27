@@ -1,19 +1,17 @@
 "use client";
 
-import { MAX_AREAS } from "@/hooks/usePhotoDesign";
-
 const STEPS = [
-  "Pick Floor, Wall or Ceiling in the toolbar.",
-  "Tap points around the edge of that area on your photo. Tap the green first point, or press Done, to close the shape.",
-  "Drag a point or a line to fit the edges exactly. Tap + to add a corner, double-tap a point to remove it, or use Undo.",
-  "Choose a material from the library and it appears on your room.",
-  "Tap a sofa, table or other item to place it, then drag, resize, rotate or flip it.",
+  "Upload a clear, straight-on photo of your room in good lighting.",
+  "Our AI automatically detects your walls, floor, ceiling, and windows in seconds.",
+  "Browse the 4 AI-curated room concepts and click any lookbook to apply it instantly.",
+  "Use 'Edit one item' to swap individual wall paints, flooring, curtains, or furniture.",
+  "Click any furniture item on the canvas to drag, resize, rotate, or adjust its 3D wall angle.",
 ];
 
 export default function PhotoInstructions() {
   return (
     <div className="rounded-xl border border-navy/10 bg-cream/40 p-4">
-      <h3 className="text-sm font-semibold text-navy">How to use</h3>
+      <h3 className="text-sm font-semibold text-navy">How AI Room Designer works</h3>
       <ol className="mt-2 space-y-1.5">
         {STEPS.map((text, i) => (
           <li key={text} className="flex gap-2 text-xs text-ink/70">
@@ -28,7 +26,7 @@ export default function PhotoInstructions() {
         ))}
       </ol>
       <p className="mt-3 text-xs text-ink/60">
-        Tip: you can mark up to {MAX_AREAS.wall} walls. For the best result, take the photo straight on, in good light.
+        Tip: For the most accurate surface detection and perspective scaling, stand straight on so both the floor and main walls are clearly visible.
       </p>
     </div>
   );

@@ -1,3 +1,6 @@
+
+
+import { Product } from "@/lib/types";
 export const PRODUCT_IMAGES: Record<string, string> = {
   // ===== SOFAS & CHAIRS =====
   "sofa-grey": "/products/chair.png",
